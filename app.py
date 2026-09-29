@@ -1,24 +1,8 @@
 """
 LuLu UAE Sales Dashboard  (app.py)
 ==================================
-A Streamlit dashboard built on SYNTHETIC (made-up) LuLu-style sales data.
-
-How the filters work
---------------------
-1. GLOBAL filters (date range + emirates) sit in the box at the top.
-   They change EVERY chart on the page.
-2. LOCAL filters sit behind the "Filters" button on each chart.
-   They change ONLY that one chart, on top of the global filters.
-
-Why each chart is wrapped in @st.fragment
------------------------------------------
-Normally, touching ANY widget makes Streamlit re-run the whole script.
-A "fragment" is a piece of the page that can re-run on its own.
-So when you change a chart's local filter, only that chart is redrawn.
-
-Run it on your own computer:
-    pip install -r requirements.txt
-    streamlit run app.py
+A Streamlit dashboard built on SYNTHETIC LuLu-style sales data.
+Updated with a Green, Yellow, Violet, and Red theme.
 """
 
 from datetime import timedelta
@@ -29,15 +13,13 @@ import plotly.express as px
 import streamlit as st
 
 # =============================================================================
-# 1. PAGE SETUP  (must be the first Streamlit command in the file)
+# 1. PAGE SETUP
 # =============================================================================
 st.set_page_config(page_title="LuLu UAE Sales Dashboard", page_icon="🛒", layout="wide")
 
 # =============================================================================
-# 2. SETTINGS USED ACROSS THE APP
+# 2. SETTINGS & THEME PALETTE (GREEN, YELLOW, VIOLET, RED)
 # =============================================================================
-# The CSV sits in the same folder as this file. Building the path from
-# __file__ means it is found both on your laptop and on Streamlit Cloud.
 DATA_FILE = Path(__file__).parent / "lulu_sales_data.csv"
 
 CATEGORIES = ["Fresh", "Grocery", "Fashion", "Home Decor", "Electronics", "Furniture"]
@@ -45,20 +27,20 @@ EMIRATES = ["Dubai", "Abu Dhabi", "Sharjah", "Ajman", "Ras Al Khaimah", "Fujaira
 AGE_GROUPS = ["18-24", "25-34", "35-44", "45-54", "55+"]
 FESTIVE_SEASONS = ["White Friday", "DSF", "Ramadan", "Back to School"]
 
-# Each category always gets the SAME colour in every chart, so viewers
-# learn the colours once and can read every chart faster.
+# Category palette mapped across Green, Yellow, Violet, and Red tones
 CATEGORY_COLORS = {
-    "Fresh": "#2E9E5B",
-    "Grocery": "#E0A526",
-    "Fashion": "#C2408A",
-    "Home Decor": "#2A9D8F",
-    "Electronics": "#3A6FD8",
-    "Furniture": "#8C5A3C",
+    "Fresh": "#10B981",        # Emerald Green
+    "Grocery": "#F59E0B",      # Warm Amber / Yellow
+    "Fashion": "#7C3AED",      # Royal Violet
+    "Home Decor": "#EF4444",   # Vivid Red
+    "Electronics": "#8B5CF6",  # Bright Violet
+    "Furniture": "#B91C1C",    # Deep Crimson Red
 }
-OTHER_COLORS = ["#3A6FD8", "#2A9D8F", "#E0A526", "#C2408A"]   # for charts not split by category
-CHART_HEIGHT = 380                                          # same height for every chart
 
-# The measures a user can choose, and the column each one comes from.
+# 4-step sequence for non-category charts (mix, distributions)
+OTHER_COLORS = ["#10B981", "#F59E0B", "#7C3AED", "#EF4444"]
+CHART_HEIGHT = 380
+
 METRIC_COLUMNS = {
     "Net sales (AED)": "Net_Sales_AED",
     "Profit (AED)": "Profit_AED",
@@ -70,21 +52,15 @@ METRIC_COLUMNS = {
 # =============================================================================
 # 3. LOAD THE DATA
 # =============================================================================
-# @st.cache_data = "read the file once, then remember it".
-# Without it, the CSV would be re-read every time anyone clicks anything.
-#
-# ➡️ LIVE VERSION (later): change this to @st.cache_data(ttl=5)
-#    so Streamlit re-reads the file every 5 seconds and picks up new rows.
 @st.cache_data
 def load_data():
     return pd.read_csv(DATA_FILE, parse_dates=["Timestamp", "Date"])
 
 
 # =============================================================================
-# 4. HELPER FUNCTIONS  (small reusable pieces used by the charts)
+# 4. HELPER FUNCTIONS
 # =============================================================================
 def aed(value):
-    """Turn a number into a short money label, e.g. 1234567 -> 'AED 1.23M'."""
     if abs(value) >= 1_000_000:
         return f"AED {value / 1_000_000:.2f}M"
     if abs(value) >= 1_000:
@@ -93,41 +69,26 @@ def aed(value):
 
 
 def filter_rows(data, start, end, emirates):
-    """Keep only rows between two dates AND inside the chosen emirates."""
     in_dates = data["Date"].between(pd.Timestamp(start), pd.Timestamp(end))
     in_emirates = data["Emirate"].isin(emirates)
     return data[in_dates & in_emirates]
 
 
 def chosen_emirates():
-    """Emirates picked in the global filter. Picking nothing means 'all emirates'."""
     return st.session_state["global_emirates"] or EMIRATES
 
 
 def get_global_data():
-    """Every chart starts here: the full data with the GLOBAL filters applied.
-
-    The global widgets save their values in st.session_state (Streamlit's
-    memory), so any chart can read them, even when only that chart re-runs.
-    """
     start, end = st.session_state["global_dates"]
     return filter_rows(load_data(), start, end, chosen_emirates())
 
 
 def emirates_in(data):
-    """Emirates that appear in the data, in our standard order."""
     present = set(data["Emirate"])
     return [e for e in EMIRATES if e in present]
 
 
 def summarise(data, group_by, metric):
-    """Group the data (e.g. by Category) and calculate one measure per group.
-
-    Most measures are simple totals. Two need special maths:
-      * Transactions      -> count the rows
-      * Profit margin (%) -> total profit / total net sales x 100
-      * Average rating    -> the average (mean) of the ratings
-    """
     groups = data.groupby(group_by)
     if metric == "Transactions":
         result = groups["Transaction_ID"].count()
@@ -141,30 +102,18 @@ def summarise(data, group_by, metric):
 
 
 def card_header(title, wide=False):
-    """Draw a chart title with a 'Filters' button on its right.
-
-    Returns the pop-over (the little menu that opens when you click the
-    button). Anything created inside  `with card_header(...):`  goes in it.
-    """
     title_col, button_col = st.columns([6, 1] if wide else [3, 1], vertical_alignment="center")
     title_col.markdown(f"#### {title}")
     return button_col.popover("Filters", icon=":material/tune:", width="stretch")
 
 
 def local_select(label, options, key):
-    """A dropdown that never gets 'stuck' on an option that has disappeared.
-
-    Example: you pick 'Ajman' in a chart, then remove Ajman in the global
-    filter. The old choice is no longer valid, so we reset it to the first
-    option ('All ...') before drawing the dropdown.
-    """
     if st.session_state.get(key) not in options:
         st.session_state[key] = options[0]
     return st.selectbox(label, options, key=key)
 
 
 def show_active_filters(*choices):
-    """The filters hide inside a pop-over, so print the current choices under the title."""
     st.caption("Showing: " + ", ".join(choices))
 
 
@@ -173,7 +122,6 @@ def no_data_message():
 
 
 def style(fig):
-    """Give every Plotly chart the same size, margins and legend position."""
     fig.update_layout(
         height=CHART_HEIGHT,
         margin=dict(l=0, r=0, t=10, b=0),
@@ -184,16 +132,10 @@ def style(fig):
 
 # =============================================================================
 # 5. THE CHARTS
-# Each function below draws one card: title + Filters button + chart.
-# @st.fragment lets each card re-run on its own when its local filters change.
-#
-# ➡️ LIVE VERSION (later): change @st.fragment to @st.fragment(run_every="5s")
-#    and the card will refresh itself every 5 seconds.
 # =============================================================================
 
 # ----------------------------------------------------------------- KPI strip
 def calc_kpis(data):
-    """The five headline numbers for a slice of data."""
     net = data["Net_Sales_AED"].sum()
     count = len(data)
     return {
@@ -206,7 +148,6 @@ def calc_kpis(data):
 
 
 def pct_change(now, before):
-    """'+12.3%' style change label, or None when there is nothing to compare with."""
     if before is None or before == 0:
         return None
     return f"{(now - before) / abs(before) * 100:+.1f}%"
@@ -216,8 +157,6 @@ def pct_change(now, before):
 def kpi_row():
     data = get_global_data()
 
-    # Compare with the period just before, of the same length.
-    # (With the full year selected there is no earlier data, so no arrows.)
     start, end = st.session_state["global_dates"]
     period_days = (end - start).days + 1
     prev_end = start - timedelta(days=1)
@@ -227,7 +166,6 @@ def kpi_row():
     now = calc_kpis(data)
     before = calc_kpis(previous) if not previous.empty else {k: None for k in now}
 
-    # Month-by-month values for the small sparkline inside each KPI box
     by_month = data.groupby(data["Date"].dt.to_period("M"))
     monthly_net = by_month["Net_Sales_AED"].sum()
     monthly_count = by_month["Transaction_ID"].count()
@@ -240,7 +178,7 @@ def kpi_row():
     }
 
     margin_delta = None if before["margin"] is None else f"{now['margin'] - before['margin']:+.1f} pts"
-    compare_help = "Arrow = change vs the previous period of the same length (shown when that period is in the data)."
+    compare_help = "Arrow = change vs the previous period of the same length."
 
     boxes = [
         ("Net sales", aed(now["net"]), pct_change(now["net"], before["net"]), "net"),
@@ -273,7 +211,7 @@ def sales_by_category_card():
         fig = px.bar(summary, x=metric, y="Category", orientation="h", text_auto=".3s",
                      color="Category", color_discrete_map=CATEGORY_COLORS)
         fig.update_layout(showlegend=False, yaxis_title=None)
-        fig.update_yaxes(categoryorder="total ascending")   # biggest bar at the top
+        fig.update_yaxes(categoryorder="total ascending")
         st.plotly_chart(style(fig), key="chart_category")
 
 
@@ -294,20 +232,19 @@ def emirate_heatmap_card():
         if data.empty:
             return no_data_message()
 
-        # Turn the long table into a grid: one row per emirate, one column per category
         grid = (summarise(data, ["Emirate", "Category"], metric)
                 .pivot(index="Emirate", columns="Category", values=metric)
                 .reindex(index=emirates_in(data), columns=CATEGORIES))
 
         is_margin = metric == "Profit margin (%)"
         if not is_margin:
-            grid = grid.fillna(0)   # no sales = 0 (a margin with no sales is left blank)
+            grid = grid.fillna(0)
 
+        # Uses Red-Yellow-Green continuous scale for margins, and Yellow-to-Violet scale for volumes
         fig = px.imshow(
             grid, aspect="auto",
             text_auto=".1f" if is_margin else ".3s",
-            # Margin can be negative, so use red-yellow-green centred on 0
-            color_continuous_scale="RdYlGn" if is_margin else "Greens",
+            color_continuous_scale="RdYlGn" if is_margin else ["#FEF3C7", "#F59E0B", "#7C3AED"],
             color_continuous_midpoint=0 if is_margin else None,
             labels=dict(x="", y="", color=""),
         )
@@ -334,24 +271,23 @@ def trend_card():
         if data.empty:
             return no_data_message()
 
-        # Put every date into a bucket: its day, its week or its month
         freq = {"Daily": "D", "Weekly": "W", "Monthly": "M"}[grain]
         data = data.assign(Period=data["Date"].dt.to_period(freq).dt.start_time)
 
         summary = summarise(data, ["Period", "Category"] if split else "Period", metric)
         fig = px.line(summary, x="Period", y=metric, markers=grain != "Daily",
                       color="Category" if split else None, category_orders={"Category": CATEGORIES},
-                      color_discrete_map=CATEGORY_COLORS, color_discrete_sequence=["#34495E"])
+                      color_discrete_map=CATEGORY_COLORS, color_discrete_sequence=["#7C3AED"])
         fig.update_layout(xaxis_title=None)
 
         if show_seasons:
-            # Find each season's first and last day from the Promotion column
             everything = load_data()
             first_shown, last_shown = data["Date"].min(), data["Date"].max()
             for season in FESTIVE_SEASONS:
                 days = everything.loc[everything["Promotion"] == season, "Date"]
-                if days.max() >= first_shown and days.min() <= last_shown:   # only if it's in view
-                    fig.add_vrect(x0=days.min(), x1=days.max(), fillcolor="#E0A526", opacity=0.12,
+                if days.max() >= first_shown and days.min() <= last_shown:
+                    # Shaded in warm yellow for festive highlight
+                    fig.add_vrect(x0=days.min(), x1=days.max(), fillcolor="#F59E0B", opacity=0.15,
                                   line_width=0, annotation_text=season, annotation_position="top left",
                                   annotation_font_size=11)
 
@@ -406,15 +342,12 @@ def promotion_card():
             "Transactions": groups["Transaction_ID"].count(),
         }).sort_values("Avg. discount (%)").reset_index()
 
-        # Show how many transactions sit behind each bar (n=...). Few transactions
-        # = a less reliable bar, and it is honest to show that.
         summary["Promotion"] = summary["Promotion"] + "<br>(n=" + summary["Transactions"].astype(str) + ")"
 
-        # Reshape to 'long' format so Plotly can draw two bars side by side
         long = summary.melt(id_vars="Promotion", value_vars=["Avg. discount (%)", "Profit margin (%)"],
                             var_name="Measure", value_name="Percent")
         fig = px.bar(long, x="Promotion", y="Percent", color="Measure", barmode="group", text_auto=".1f",
-                     color_discrete_map={"Avg. discount (%)": "#E0A526", "Profit margin (%)": "#2E9E5B"})
+                     color_discrete_map={"Avg. discount (%)": "#F59E0B", "Profit margin (%)": "#10B981"})
         fig.update_layout(xaxis_title=None, yaxis_title="%")
         st.plotly_chart(style(fig), key="chart_promo")
 
@@ -442,7 +375,7 @@ def customer_card():
         fig = px.bar(summary, x="Age_Group", y=metric, color="Gender", barmode="group",
                      text_auto=".2f" if metric.startswith("Average") else ".3s",
                      category_orders={"Age_Group": AGE_GROUPS},
-                     color_discrete_map={"Female": "#4C5B7A", "Male": "#A3B4CC"},
+                     color_discrete_map={"Female": "#7C3AED", "Male": "#EF4444"},
                      labels={"Age_Group": "Age group"})
         st.plotly_chart(style(fig), key="chart_customers")
 
@@ -479,9 +412,8 @@ def top_products_card():
             column_config={
                 "Sub_Category": st.column_config.TextColumn("Sub-category", pinned=True),
                 "Category": st.column_config.TextColumn(width="small"),
-                # A bar inside the cell makes the biggest sellers easy to spot
                 "Net sales (AED)": st.column_config.ProgressColumn(
-                    "Net sales", format="compact", color="#2E9E5B", width="small",
+                    "Net sales", format="compact", color="#10B981", width="small",
                     min_value=0, max_value=float(table["Net sales (AED)"].max())),
                 "Profit (AED)": st.column_config.NumberColumn("Profit", format="compact", width="small"),
                 "Units sold": st.column_config.NumberColumn("Units", width="small"),
@@ -505,7 +437,7 @@ def data_explorer_card():
 
         if category != "All categories":
             data = data[data["Category"] == category]
-        columns = columns or all_columns          # nothing picked = show every column
+        columns = columns or all_columns
         show_active_filters(category, f"{len(data):,} rows", f"{len(columns)} of {len(all_columns)} columns")
 
         st.dataframe(data[columns], hide_index=True, height=300)
@@ -515,7 +447,7 @@ def data_explorer_card():
 
 
 # =============================================================================
-# 6. PAGE LAYOUT  (this is the part that actually draws the page, top to bottom)
+# 6. PAGE LAYOUT
 # =============================================================================
 df = load_data()
 first_day, last_day = df["Date"].min().date(), df["Date"].max().date()
@@ -524,7 +456,6 @@ st.title("🛒 LuLu UAE Sales Dashboard")
 st.caption(f"Synthetic data for teaching, not real LuLu figures. {len(df):,} transactions "
            f"from {first_day:%d %b %Y} to {last_day:%d %b %Y}.")
 
-# ---- Global filters (they change every chart) ----
 with st.container(border=True):
     date_col, emirate_col = st.columns([1, 2])
     date_col.date_input("Date range", value=(first_day, last_day), min_value=first_day,
@@ -532,8 +463,6 @@ with st.container(border=True):
     emirate_col.multiselect("Emirates", EMIRATES, placeholder="All emirates", key="global_emirates")
     st.caption("These two filters change every chart. Each chart's Filters button changes only that chart.")
 
-# While someone is picking dates, the date box holds just the first date.
-# Wait until both dates are chosen before drawing anything.
 if len(st.session_state["global_dates"]) != 2:
     st.info("Pick an end date to finish setting the date range.")
     st.stop()
@@ -542,10 +471,8 @@ if get_global_data().empty:
     st.warning("No transactions in this date range and emirate selection. Widen the global filters.")
     st.stop()
 
-# ---- KPIs ----
 kpi_row()
 
-# ---- Charts: two per row, wide charts get the full row ----
 left, right = st.columns(2)
 with left:
     sales_by_category_card()
